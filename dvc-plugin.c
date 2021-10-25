@@ -17,7 +17,7 @@ FILE *openlog(void)
             fprintf(stderr, "log file path is too long: %lu\n", path_length);
         else if (path_length == 0)
             fprintf(stderr, "ExpandEnvironmentStrings %lu\n", GetLastError());
-        else if ((log_file = fopen(path, "wb")) == NULL)
+        else if ((log_file = fopen(path, "ab")) == NULL)
             perror("fopen");
     }
     return log_file;
@@ -38,7 +38,7 @@ void log_message(const char *format, ...)
     time(&ltime);
     today = localtime(&ltime);
     strftime(timestr, sizeof(timestr), "%Y-%m-%d %H:%M:%S", today);
-    fprintf(fh, "%s [%lu] ", timestr, GetCurrentThreadId());
+    fprintf(fh, "%s [pid %lu, tid %lu] ", timestr, GetCurrentProcessId(), GetCurrentThreadId());
     va_start(v, format);
     vfprintf(fh, format, v);
     va_end(v);
@@ -62,8 +62,10 @@ static
 STDMETHODIMP plugin_query_interface(IWTSPlugin *This, REFIID riid, void **ppvObject)
 {
     char iid[39] = {0};
-    if (riid == NULL)
+    if (riid == NULL) {
+        log_message("plugin_query_interface riid is NULL");
         return E_INVALIDARG;
+    }
     iid_to_string(riid, iid);
     log_message("plugin_query_interface %s", iid);
     if (!IsEqualIID(riid, &IID_IWTSPlugin) && !IsEqualIID(riid, &IID_IUnknown))
@@ -135,22 +137,30 @@ STDAPI VirtualChannelGetInstance(
   _Out_   VOID   **ppObjArray
 )
 {
-    if (refiid == NULL)
+    if (refiid == NULL) {
+        log_message("VirtualChannelGetInstance refiid is NULL");
         return E_INVALIDARG;
+    }
     if (!IsEqualIID(refiid, &IID_IWTSPlugin)) {
         char iid[39] = {0};
         iid_to_string(refiid, iid);
         log_message("VirtualChannelGetInstance unknown iid %s", iid);
         return E_NOINTERFACE;
     }
-    if (pNumObjs == NULL)
+    if (pNumObjs == NULL) {
+        log_message("VirtualChannelGetInstance pNumObjs is NULL");
         return E_POINTER;
+    }
     if (ppObjArray == NULL) {
+        log_message("VirtualChannelGetInstance get number of instances");
         *pNumObjs = 1;
         return S_OK;
     }
-    if (*pNumObjs < 1)
+    if (*pNumObjs < 1) {
+        log_message("VirtualChannelGetInstance *pNumObjs=%lu is too small", *pNumObjs);
         return E_INVALIDARG;
+    }
+    log_message("VirtualChannelGetInstance get plugin instance");
     *pNumObjs = 1;
     ppObjArray[0] = &plugin;
     return S_OK;
