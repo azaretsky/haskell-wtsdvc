@@ -89,10 +89,15 @@ STDMETHODIMP_(ULONG) plugin_release(IWTSPlugin *This)
     return 0;
 }
 
+static IWTSVirtualChannelManager *channel_manager = NULL;
+
 static
 STDMETHODIMP plugin_initialize(IWTSPlugin *This, IWTSVirtualChannelManager *pChannelMgr)
 {
-    log_message("plugin_initialize pChannelMgr=%p", pChannelMgr);
+    ULONG refs;
+    refs = pChannelMgr->lpVtbl->AddRef(pChannelMgr);
+    channel_manager = pChannelMgr;
+    log_message("plugin_initialize channel manager references %lu", refs);
     return S_OK;
 }
 
@@ -113,7 +118,12 @@ STDMETHODIMP plugin_disconnected(IWTSPlugin *This, DWORD dwDisconnectCode)
 static
 STDMETHODIMP plugin_terminated(IWTSPlugin *This)
 {
-    log_message("plugin_terminated");
+    IWTSVirtualChannelManager *cm;
+    ULONG refs;
+    cm = channel_manager;
+    channel_manager = NULL;
+    refs = cm->lpVtbl->Release(cm);
+    log_message("plugin_terminated channel manager references %lu", refs);
     return S_OK;
 }
 
