@@ -3,4 +3,4 @@
 TOOLCHAIN_PREFIX=x86_64-w64-mingw32-
 CC=${TOOLCHAIN_PREFIX}gcc
 
-$CC -shared -o dvc-plugin.dll -s -O3 -Wall dvc-plugin.c -luuid
+$CC -shared -o dvc-plugin.dll -s -O3 -Wall cbits/dvc-plugin.c -luuid
