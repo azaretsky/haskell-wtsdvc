@@ -83,6 +83,7 @@ STDMETHODIMP_(ULONG) plugin_add_ref(IWTSPlugin *This)
     return 1;
 }
 
+static
 STDMETHODIMP_(ULONG) plugin_release(IWTSPlugin *This)
 {
     log_message("plugin_release");
@@ -141,11 +142,7 @@ static IWTSPlugin plugin = {
     .lpVtbl = &plugin_vtbl
 };
 
-STDAPI VirtualChannelGetInstance(
-  _In_    REFIID refiid,
-  _Inout_ ULONG  *pNumObjs,
-  _Out_   VOID   **ppObjArray
-)
+STDAPI VirtualChannelGetInstance(REFIID refiid, ULONG *pNumObjs, VOID **ppObjArray)
 {
     if (refiid == NULL) {
         log_message("VirtualChannelGetInstance refiid is NULL");
@@ -161,17 +158,15 @@ STDAPI VirtualChannelGetInstance(
         log_message("VirtualChannelGetInstance pNumObjs is NULL");
         return E_POINTER;
     }
-    if (ppObjArray == NULL) {
+    if (ppObjArray != NULL) {
+        if (*pNumObjs < 1) {
+            log_message("VirtualChannelGetInstance *pNumObjs=%lu is too small", *pNumObjs);
+            return E_INVALIDARG;
+        }
+        log_message("VirtualChannelGetInstance get plugin instance");
+        ppObjArray[0] = &plugin;
+    } else
         log_message("VirtualChannelGetInstance get number of instances");
-        *pNumObjs = 1;
-        return S_OK;
-    }
-    if (*pNumObjs < 1) {
-        log_message("VirtualChannelGetInstance *pNumObjs=%lu is too small", *pNumObjs);
-        return E_INVALIDARG;
-    }
-    log_message("VirtualChannelGetInstance get plugin instance");
     *pNumObjs = 1;
-    ppObjArray[0] = &plugin;
     return S_OK;
 }

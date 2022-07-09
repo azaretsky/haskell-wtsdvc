@@ -55,3 +55,5 @@ DECLARE_INTERFACE(IWTSPlugin) {
     STDMETHOD(Disconnected)(THIS_ DWORD dwDisconnectCode) PURE;
     STDMETHOD(Terminated)(THIS) PURE;
 };
+
+__declspec(dllexport) STDAPI VirtualChannelGetInstance(REFIID refiid, ULONG *pNumObjs, VOID **ppObjArray);
