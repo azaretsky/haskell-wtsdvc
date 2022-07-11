@@ -1,49 +1,79 @@
+#include <fcntl.h>
+#include <io.h>
 #include <stdio.h>
-#include <time.h>
-
 #include <windows.h>
-
 #include "wts-plugin-api.h"
 
 static
-FILE *openlog(void)
+void setup_std_handles(void)
 {
-    static FILE *log_file = NULL;
-    char path[256];
+    SECURITY_ATTRIBUTES sa = {
+        .nLength = sizeof(sa),
+        .lpSecurityDescriptor = NULL,
+        .bInheritHandle = TRUE
+    };
+    HANDLE h;
     DWORD path_length;
-    if (log_file == NULL) {
-        path_length = ExpandEnvironmentStrings("%USERPROFILE%\\dvc-plugin.log", path, sizeof(path));
-        if (path_length > sizeof(path))
-            fprintf(stderr, "log file path is too long: %lu\n", path_length);
-        else if (path_length == 0)
-            fprintf(stderr, "ExpandEnvironmentStrings %lu\n", GetLastError());
-        else if ((log_file = fopen(path, "ab")) == NULL)
-            perror("fopen");
+    int fd;
+    char path[256];
+    path_length = ExpandEnvironmentStrings("%USERPROFILE%\\dvc-plugin.log", path, sizeof(path));
+    if (path_length > sizeof(path)) {
+        fprintf(stderr, "log file path is too long: %lu\n", path_length);
+        return;
     }
-    return log_file;
+    if (path_length == 0) {
+        fprintf(stderr, "ExpandEnvironmentStrings %lu\n", GetLastError());
+        return;
+    }
+    h = CreateFile(
+        path,
+        GENERIC_WRITE,
+        FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
+        &sa,
+        OPEN_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        NULL
+    );
+    if (h == INVALID_HANDLE_VALUE) {
+        fprintf(stderr, "CreateFile(%s) %lu\n", path, GetLastError());
+        return;
+    }
+    if (!SetStdHandle(STD_OUTPUT_HANDLE, h) || !SetStdHandle(STD_ERROR_HANDLE, h)) {
+        fprintf(stderr, "SetStdHandle %lu\n", GetLastError());
+        CloseHandle(h);
+        return;
+    }
+    fd = _open_osfhandle((intptr_t) h, _O_APPEND);
+    if (fd == -1) {
+        fprintf(stderr, "_open_osfhandle %s (%d)\n", strerror(errno), errno);
+        CloseHandle(h);
+        return;
+    }
+    if (_dup2(fd, 1) == -1 || _dup2(fd, 2) == -1) {
+        fprintf(stderr, "_dup2 %s (%d)\n", strerror(errno), errno);
+    } else {
+        stdout->_file = 1;
+        stderr->_file = 2;
+    }
+    _close(fd);
 }
 
 __attribute__ ((format (printf, 1, 2)))
 static
 void log_message(const char *format, ...)
 {
-    char timestr[32];
-    FILE *fh;
-    struct tm *today;
-    time_t ltime;
+    SYSTEMTIME local_time;
     va_list v;
-    fh = openlog();
-    if (fh == NULL)
-        return;
-    time(&ltime);
-    today = localtime(&ltime);
-    strftime(timestr, sizeof(timestr), "%Y-%m-%d %H:%M:%S", today);
-    fprintf(fh, "%s [pid %lu, tid %lu] ", timestr, GetCurrentProcessId(), GetCurrentThreadId());
+    GetLocalTime(&local_time);
+    fprintf(stderr, "%04d-%02d-%02d %02d:%02d:%02d.%03d [pid %lu, tid %lu] ",
+        local_time.wYear, local_time.wMonth, local_time.wDay, local_time.wHour,
+        local_time.wMinute, local_time.wSecond, local_time.wMilliseconds,
+        GetCurrentProcessId(), GetCurrentThreadId());
     va_start(v, format);
-    vfprintf(fh, format, v);
+    vfprintf(stderr, format, v);
     va_end(v);
-    fprintf(fh, "\n");
-    fflush(fh);
+    fprintf(stderr, "\n");
+    fflush(stderr);
 }
 
 static
@@ -144,6 +174,7 @@ static IWTSPlugin plugin = {
 
 STDAPI VirtualChannelGetInstance(REFIID refiid, ULONG *pNumObjs, VOID **ppObjArray)
 {
+    setup_std_handles();
     if (refiid == NULL) {
         log_message("VirtualChannelGetInstance refiid is NULL");
         return E_INVALIDARG;
