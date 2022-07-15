@@ -1,0 +1,33 @@
+cabal-version: 3.0
+name: wtsdvc
+version: 0.1.0
+license: BSD-3-Clause
+author: Anatoly Zaretsky
+maintainer: anatoly.zaretsky@gmail.com
+
+common deps
+    build-depends:
+        base
+    ghc-options: -fPIC -Wall -O2
+    default-language: Haskell2010
+
+library
+    import: deps
+    exposed-modules: Network.WtsDvc.Client
+    extra-libraries: uuid
+    hs-source-dirs: src
+    include-dirs: cbits
+    c-sources: cbits/dvc-plugin.c
+    cc-options: -fPIC -Wall -O3
+    ld-options: -Wl,-u,VirtualChannelGetInstance
+
+foreign-library test-plugin
+    import: deps
+    type: native-shared
+    options: standalone
+    build-depends:
+      , wtsdvc
+    hs-source-dirs: test
+    other-modules: Plugin
+    ghc-options: -threaded
+    ld-options: -s

@@ -1,8 +1,11 @@
+#include "HsFFI.h"
 #include <fcntl.h>
 #include <io.h>
 #include <stdio.h>
 #include <windows.h>
 #include "wts-plugin-api.h"
+
+extern int wts_hs_initialize(void);
 
 static
 void setup_std_handles(void)
@@ -126,9 +129,17 @@ static
 STDMETHODIMP plugin_initialize(IWTSPlugin *This, IWTSVirtualChannelManager *pChannelMgr)
 {
     ULONG refs;
+    int argc;
+    char *argv[] = {"wts-dvc-plugin", NULL};
+    char **args = argv;
     refs = pChannelMgr->lpVtbl->AddRef(pChannelMgr);
     channel_manager = pChannelMgr;
     log_message("plugin_initialize channel manager references %lu", refs);
+    hs_init(&argc, &args);
+    if (!wts_hs_initialize()) {
+        This->lpVtbl->Terminated(This);
+        return E_UNEXPECTED;
+    }
     return S_OK;
 }
 
@@ -151,6 +162,7 @@ STDMETHODIMP plugin_terminated(IWTSPlugin *This)
 {
     IWTSVirtualChannelManager *cm;
     ULONG refs;
+    hs_exit();
     cm = channel_manager;
     channel_manager = NULL;
     refs = cm->lpVtbl->Release(cm);
