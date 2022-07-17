@@ -6,14 +6,17 @@ author: Anatoly Zaretsky
 maintainer: anatoly.zaretsky@gmail.com
 
 common deps
-    build-depends:
-        base
+    build-depends: base
     ghc-options: -fPIC -Wall -O2
     default-language: Haskell2010
+    default-extensions: TemplateHaskell
 
 library
     import: deps
-    exposed-modules: Network.WtsDvc.Client
+    build-depends: template-haskell
+    exposed-modules:
+        Network.WtsDvc.Client
+        Network.WtsDvc.Client.TH
     extra-libraries: uuid
     hs-source-dirs: src
     include-dirs: cbits

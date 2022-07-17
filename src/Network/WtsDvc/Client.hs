@@ -1,7 +1,7 @@
 module Network.WtsDvc.Client (catchAllExceptions) where
 
 import Control.Exception (catch, displayException, SomeException)
-import Foreign.C (CInt (..))
+import Foreign.C (CInt)
 import System.IO (hPutStrLn, stderr)
 
 reportUnhandledException :: SomeException -> IO ()
