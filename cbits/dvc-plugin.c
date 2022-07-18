@@ -186,6 +186,98 @@ static IWTSPlugin plugin = {
     .lpVtbl = &plugin_vtbl
 };
 
+struct listener_callback {
+    IWTSListenerCallback iface;
+    LONG volatile refs;
+    HsStablePtr listener;
+};
+
+static
+STDMETHODIMP lcb_query_interface(IWTSListenerCallback *This, REFIID riid, void **ppvObject)
+{
+    char iid[IID_STRING_BUF_SIZE] = {0};
+    if (riid == NULL) {
+        log_message("lcb_query_interface %p riid is NULL", This);
+        return E_INVALIDARG;
+    }
+    iid_to_string(riid, iid);
+    log_message("lcb_query_interface %p %s", This, iid);
+    if (!IsEqualIID(riid, &IID_IWTSListenerCallback) && !IsEqualIID(riid, &IID_IUnknown)) {
+        log_message("lcb_query_interface %p: unknown interface", This);
+        return E_NOINTERFACE;
+    }
+    if (ppvObject == NULL)
+        return E_POINTER;
+    This->lpVtbl->AddRef(This);
+    *ppvObject = This;
+    return S_OK;
+}
+
+static
+STDMETHODIMP_(ULONG) lcb_add_ref(IWTSListenerCallback *This)
+{
+    struct listener_callback *lcb = (struct listener_callback *) This;
+    LONG refs = InterlockedIncrement(&lcb->refs);
+    log_message("lcb_add_ref %p %ld", lcb, refs);
+    return refs;
+}
+
+static
+STDMETHODIMP_(ULONG) lcb_release(IWTSListenerCallback *This)
+{
+    struct listener_callback *lcb = (struct listener_callback *) This;
+    LONG refs = InterlockedDecrement(&lcb->refs);
+    log_message("lcb_release %p %ld", lcb, refs);
+    if (refs == 0) {
+        hs_free_stable_ptr(lcb->listener);
+        free(lcb);
+    }
+    return refs;
+}
+
+static
+STDMETHODIMP lcb_on_new_channel_connection(
+    IWTSListenerCallback *This,
+    IWTSVirtualChannel *pChannel,
+    BSTR data,
+    BOOL *pbAccept,
+    IWTSVirtualChannelCallback **ppCallback
+  )
+{
+    struct listener_callback *lcb = (struct listener_callback *) This;
+    log_message("lcb_on_new_channel_connection %p pChannel=%p data=%p", lcb, pChannel, data);
+    *pbAccept = FALSE;
+    *ppCallback = NULL;
+    return S_OK;
+}
+
+
+static CONST_VTBL IWTSListenerCallbackVtbl listener_callback_vtbl = {
+    .QueryInterface = lcb_query_interface,
+    .AddRef = lcb_add_ref,
+    .Release = lcb_release,
+    .OnNewChannelConnection = lcb_on_new_channel_connection
+};
+
+HsInt32 wts_create_listener(const char *channel_name, HsStablePtr listener)
+{
+    struct listener_callback *lcb;
+    HRESULT hr;
+    lcb = malloc(sizeof(struct listener_callback));
+    if (lcb == NULL) {
+        log_message("wts_create_listener \"%s\": malloc failed", channel_name);
+        hs_free_stable_ptr(listener);
+        return E_OUTOFMEMORY;
+    }
+    log_message("wts_create_listener \"%s\" -> created %p", channel_name, lcb);
+    lcb->iface.lpVtbl = &listener_callback_vtbl;
+    lcb->refs = 1;
+    lcb->listener = listener;
+    hr = channel_manager->lpVtbl->CreateListener(channel_manager, channel_name, 0, &lcb->iface, NULL);
+    lcb->iface.lpVtbl->Release(&lcb->iface);
+    return hr;
+}
+
 STDAPI VirtualChannelGetInstance(REFIID refiid, ULONG *pNumObjs, VOID **ppObjArray)
 {
     setup_std_handles();

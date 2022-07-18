@@ -13,7 +13,9 @@ common deps
 
 library
     import: deps
-    build-depends: template-haskell
+    build-depends:
+      , bytestring
+      , template-haskell
     exposed-modules:
         Network.WtsDvc.Client
         Network.WtsDvc.Client.TH
