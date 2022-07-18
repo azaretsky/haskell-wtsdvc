@@ -79,8 +79,10 @@ void log_message(const char *format, ...)
     fflush(stderr);
 }
 
+#define IID_STRING_BUF_SIZE 39
+
 static
-void iid_to_string(const REFIID iid, char out[39])
+void iid_to_string(const REFIID iid, char out[IID_STRING_BUF_SIZE])
 {
     sprintf(out, "{%08lx-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}",
         iid->Data1,
@@ -94,7 +96,7 @@ void iid_to_string(const REFIID iid, char out[39])
 static
 STDMETHODIMP plugin_query_interface(IWTSPlugin *This, REFIID riid, void **ppvObject)
 {
-    char iid[39] = {0};
+    char iid[IID_STRING_BUF_SIZE] = {0};
     if (riid == NULL) {
         log_message("plugin_query_interface riid is NULL");
         return E_INVALIDARG;
@@ -192,7 +194,7 @@ STDAPI VirtualChannelGetInstance(REFIID refiid, ULONG *pNumObjs, VOID **ppObjArr
         return E_INVALIDARG;
     }
     if (!IsEqualIID(refiid, &IID_IWTSPlugin)) {
-        char iid[39] = {0};
+        char iid[IID_STRING_BUF_SIZE] = {0};
         iid_to_string(refiid, iid);
         log_message("VirtualChannelGetInstance unknown iid %s", iid);
         return E_NOINTERFACE;
