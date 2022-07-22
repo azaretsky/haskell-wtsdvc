@@ -13,6 +13,7 @@ common deps
 
 library
     import: deps
+    default-extensions: LambdaCase
     build-depends:
       , bytestring
       , template-haskell

@@ -6,6 +6,9 @@
 #include "wts-plugin-api.h"
 
 extern int wts_hs_initialize(void);
+extern int wts_hs_new_channel_connection(HsStablePtr, IWTSVirtualChannel *, HsStablePtr *);
+extern int wts_hs_data_received(HsStablePtr, const void *, ULONG);
+extern int wts_hs_closed(HsStablePtr);
 
 static
 void setup_std_handles(void)
@@ -138,7 +141,7 @@ STDMETHODIMP plugin_initialize(IWTSPlugin *This, IWTSVirtualChannelManager *pCha
     channel_manager = pChannelMgr;
     log_message("plugin_initialize channel manager references %lu", refs);
     hs_init(&argc, &args);
-    if (!wts_hs_initialize()) {
+    if (wts_hs_initialize() < 0) {
         This->lpVtbl->Terminated(This);
         return E_UNEXPECTED;
     }
@@ -184,6 +187,84 @@ static CONST_VTBL IWTSPluginVtbl plugin_vtbl = {
 
 static IWTSPlugin plugin = {
     .lpVtbl = &plugin_vtbl
+};
+
+struct channel_callback {
+    IWTSVirtualChannelCallback iface;
+    LONG volatile refs;
+    HsStablePtr channel_callback;
+};
+
+static
+STDMETHODIMP ccb_query_interface(IWTSVirtualChannelCallback *This, REFIID riid, void **ppvObject)
+{
+    char iid[IID_STRING_BUF_SIZE] = {0};
+    if (riid == NULL) {
+        log_message("ccb_query_interface %p riid is NULL", This);
+        return E_INVALIDARG;
+    }
+    iid_to_string(riid, iid);
+    log_message("ccb_query_interface %p %s", This, iid);
+    if (!IsEqualIID(riid, &IID_IWTSVirtualChannelCallback) && !IsEqualIID(riid, &IID_IUnknown)) {
+        log_message("ccb_query_interface %p: unknown interface", This);
+        return E_NOINTERFACE;
+    }
+    if (ppvObject == NULL)
+        return E_POINTER;
+    This->lpVtbl->AddRef(This);
+    *ppvObject = This;
+    return S_OK;
+}
+
+static
+STDMETHODIMP_(ULONG) ccb_add_ref(IWTSVirtualChannelCallback *This)
+{
+    struct channel_callback *ccb = (struct channel_callback *) This;
+    LONG refs = InterlockedIncrement(&ccb->refs);
+    log_message("ccb_add_ref %p %ld", ccb, refs);
+    return refs;
+}
+
+static
+STDMETHODIMP_(ULONG) ccb_release(IWTSVirtualChannelCallback *This)
+{
+    struct channel_callback *ccb = (struct channel_callback *) This;
+    LONG refs = InterlockedDecrement(&ccb->refs);
+    log_message("ccb_release %p %ld", ccb, refs);
+    if (refs == 0) {
+        if (ccb->channel_callback != NULL)
+            hs_free_stable_ptr(ccb->channel_callback);
+        free(ccb);
+    }
+    return refs;
+}
+
+static
+STDMETHODIMP ccb_on_data_received(IWTSVirtualChannelCallback *This, ULONG cbSize, BYTE *pBuffer)
+{
+    struct channel_callback *ccb = (struct channel_callback *) This;
+    log_message("ccb_on_data_received %p cbSize=%lu pBuffer=%p", ccb, cbSize, pBuffer);
+    if (wts_hs_data_received(ccb->channel_callback, pBuffer, cbSize) < 0)
+        return E_UNEXPECTED;
+    return S_OK;
+}
+
+static
+STDMETHODIMP ccb_on_close(IWTSVirtualChannelCallback *This)
+{
+    struct channel_callback *ccb = (struct channel_callback *) This;
+    log_message("ccb_on_close %p", ccb);
+    if (wts_hs_closed(ccb->channel_callback) < 0)
+        return E_UNEXPECTED;
+    return S_OK;
+}
+
+static CONST_VTBL IWTSVirtualChannelCallbackVtbl channel_callback_vtbl = {
+    .QueryInterface = ccb_query_interface,
+    .AddRef = ccb_add_ref,
+    .Release = ccb_release,
+    .OnDataReceived = ccb_on_data_received,
+    .OnClose = ccb_on_close
 };
 
 struct listener_callback {
@@ -244,13 +325,35 @@ STDMETHODIMP lcb_on_new_channel_connection(
     IWTSVirtualChannelCallback **ppCallback
   )
 {
-    struct listener_callback *lcb = (struct listener_callback *) This;
-    log_message("lcb_on_new_channel_connection %p pChannel=%p data=%p", lcb, pChannel, data);
-    *pbAccept = FALSE;
-    *ppCallback = NULL;
+    struct listener_callback *lcb;
+    struct channel_callback *ccb;
+    HsStablePtr channel_callback;
+    lcb = (struct listener_callback *) This;
+    log_message("lcb_on_new_channel_connection %p pChannel=%p", lcb, pChannel);
+    ccb = malloc(sizeof(struct channel_callback));
+    if (ccb == NULL) {
+        log_message("lcb_on_new_channel_connection %p %p: malloc failed", lcb, pChannel);
+        return E_OUTOFMEMORY;
+    }
+    log_message("lcb_on_new_channel_connection %p %p -> created %p", lcb, pChannel, ccb);
+    ccb->iface.lpVtbl = &channel_callback_vtbl;
+    ccb->refs = 1;
+    ccb->channel_callback = NULL;
+    if (wts_hs_new_channel_connection(lcb->listener, pChannel, &channel_callback) < 0) {
+        ccb->iface.lpVtbl->Release(&ccb->iface);
+        return E_UNEXPECTED;
+    }
+    if (channel_callback == NULL) {
+        *pbAccept = FALSE;
+        *ppCallback = NULL;
+        ccb->iface.lpVtbl->Release(&ccb->iface);
+        return S_OK;
+    }
+    ccb->channel_callback = channel_callback;
+    *pbAccept = TRUE;
+    *ppCallback = &ccb->iface;
     return S_OK;
 }
-
 
 static CONST_VTBL IWTSListenerCallbackVtbl listener_callback_vtbl = {
     .QueryInterface = lcb_query_interface,
@@ -259,23 +362,59 @@ static CONST_VTBL IWTSListenerCallbackVtbl listener_callback_vtbl = {
     .OnNewChannelConnection = lcb_on_new_channel_connection
 };
 
-HsInt32 wts_create_listener(const char *channel_name, HsStablePtr listener)
+int wts_create_listener(const char *channel_name, HsStablePtr listener)
 {
     struct listener_callback *lcb;
     HRESULT hr;
     lcb = malloc(sizeof(struct listener_callback));
     if (lcb == NULL) {
-        log_message("wts_create_listener \"%s\": malloc failed", channel_name);
+        log_message("wts_create_listener %s: malloc failed", channel_name);
         hs_free_stable_ptr(listener);
-        return E_OUTOFMEMORY;
+        return -1;
     }
-    log_message("wts_create_listener \"%s\" -> created %p", channel_name, lcb);
+    log_message("wts_create_listener %s -> created %p", channel_name, lcb);
     lcb->iface.lpVtbl = &listener_callback_vtbl;
     lcb->refs = 1;
     lcb->listener = listener;
     hr = channel_manager->lpVtbl->CreateListener(channel_manager, channel_name, 0, &lcb->iface, NULL);
     lcb->iface.lpVtbl->Release(&lcb->iface);
-    return hr;
+    if (hr != S_OK) {
+        log_message("wts_create_listener %s: channel manager failed for %p error 0x%08lx", channel_name, lcb, hr);
+        return -1;
+    }
+    return 0;
+}
+
+void wts_ref_channel(IWTSVirtualChannel *channel)
+{
+    ULONG refs = channel->lpVtbl->AddRef(channel);
+    log_message("wts_ref_channel %p refs %lu", channel, refs);
+}
+
+void wts_unref_channel(IWTSVirtualChannel *channel)
+{
+    ULONG refs = channel->lpVtbl->Release(channel);
+    log_message("wts_unref_channel %p refs %lu", channel, refs);
+}
+
+int wts_write_channel(IWTSVirtualChannel *channel, void *bytes, ULONG len)
+{
+    HRESULT hr = channel->lpVtbl->Write(channel, len, bytes, NULL);
+    if (hr != S_OK) {
+        log_message("wts_write_channel %p error 0x%08lx", channel, hr);
+        return -1;
+    }
+    return 0;
+}
+
+int wts_close_channel(IWTSVirtualChannel *channel)
+{
+    HRESULT hr = channel->lpVtbl->Close(channel);
+    if (hr != S_OK) {
+        log_message("wts_close_channel %p error 0x%08lx", channel, hr);
+        return -1;
+    }
+    return 0;
 }
 
 STDAPI VirtualChannelGetInstance(REFIID refiid, ULONG *pNumObjs, VOID **ppObjArray)

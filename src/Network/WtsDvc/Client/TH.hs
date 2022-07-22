@@ -8,7 +8,7 @@ declareEntryPoint :: Name -> Q [Dec]
 declareEntryPoint entry = do
     let exportName = mkName "wtsHsInitialize_th_generated"
     ty <- [t| IO CInt |]
-    body <- [e| catchAllExceptions $(varE entry) |]
+    body <- [e| catchAllExceptions "wtsHsInitialize" $(varE entry) |]
     pure [
         SigD exportName ty
       , ValD (VarP exportName) (NormalB body) []
