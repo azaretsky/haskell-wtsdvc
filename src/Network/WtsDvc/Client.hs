@@ -13,8 +13,8 @@ import qualified Data.ByteString as B (ByteString, packCStringLen)
 import qualified Data.ByteString.Unsafe as B (unsafeUseAsCStringLen)
 import Data.Word (Word32)
 import Foreign (
+    FinalizerPtr,
     ForeignPtr,
-    FunPtr,
     Ptr,
     StablePtr,
     castPtr,
@@ -116,12 +116,39 @@ foreign export ccall "wts_hs_new_channel_connection" newChannelConnection
     -> Ptr Channel
     -> Ptr (StablePtr ChannelCallback)
     -> IO CInt
-foreign export ccall "wts_hs_data_received" dataReceived :: StablePtr ChannelCallback -> Ptr a -> Word32 -> IO CInt
-foreign export ccall "wts_hs_closed" channelClosed :: StablePtr ChannelCallback -> IO CInt
 
-foreign import ccall "wts_create_listener" c_createListener :: CString -> StablePtr ListenerCallback -> IO CInt
-foreign import ccall "wts_ref_channel" c_refChannel :: Ptr Channel -> IO ()
-foreign import ccall "wts_unref_channel" c_unrefChannel :: Ptr Channel -> IO ()
-foreign import ccall "wts_write_channel" c_writeChannel :: Ptr Channel -> Ptr a -> Word32 -> IO CInt
-foreign import ccall "wts_close_channel" c_closeChannel :: Ptr Channel -> IO CInt
-foreign import ccall "&wts_unref_channel" channelFinalizer :: FunPtr (Ptr Channel -> IO ())
+foreign export ccall "wts_hs_data_received" dataReceived
+    :: StablePtr ChannelCallback
+    -> Ptr a
+    -> Word32
+    -> IO CInt
+
+foreign export ccall "wts_hs_closed" channelClosed
+    :: StablePtr ChannelCallback
+    -> IO CInt
+
+foreign import ccall "wts_create_listener" c_createListener
+    :: CString
+    -> StablePtr ListenerCallback
+    -> IO CInt
+
+foreign import ccall "wts_ref_channel" c_refChannel
+    :: Ptr Channel
+    -> IO ()
+
+foreign import ccall "wts_unref_channel" c_unrefChannel
+    :: Ptr Channel
+    -> IO ()
+
+foreign import ccall "wts_write_channel" c_writeChannel
+    :: Ptr Channel
+    -> Ptr a
+    -> Word32
+    -> IO CInt
+
+foreign import ccall "wts_close_channel" c_closeChannel
+    :: Ptr Channel
+    -> IO CInt
+
+foreign import ccall "&wts_unref_channel" channelFinalizer
+    :: FinalizerPtr Channel
