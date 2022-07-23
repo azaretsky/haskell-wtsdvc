@@ -30,6 +30,7 @@ import Foreign (
   )
 import Foreign.C (CInt (..), CString, withCAString)
 import System.IO (hPutStrLn, stderr)
+import System.IO.Error (illegalOperationErrorType, ioeSetErrorString, mkIOError)
 
 reportUnhandledException :: String -> SomeException -> IO ()
 reportUnhandledException loc e = hPutStrLn stderr $ loc <> ": unhandled exception " <> displayException e
@@ -55,12 +56,14 @@ chWrite (Channel m) bytes = do
         Just f -> withForeignPtr f $ \p -> do
             c_refChannel p
             return p
-    when (p /= nullPtr) $ throwIfNeg_ (const "chWrite") $ do
-        res <- finally
-            (B.unsafeUseAsCStringLen bytes $ \(bytesPtr, len) ->
-                c_writeChannel p bytesPtr (fromIntegral len))
-            (c_unrefChannel p)
-        return res
+    when (p == nullPtr) $ ioError $
+        mkIOError illegalOperationErrorType "chWrite" Nothing Nothing
+        `ioeSetErrorString`
+        "channel is closed"
+    throwIfNeg_ (const "chWrite") $ finally
+        (B.unsafeUseAsCStringLen bytes $ \(bytesPtr, len) ->
+            c_writeChannel p bytesPtr (fromIntegral len))
+        (c_unrefChannel p)
 
 chClose :: Channel -> IO ()
 chClose (Channel m) = do
