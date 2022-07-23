@@ -6,7 +6,7 @@
 #include "wts-plugin-api.h"
 
 extern int wts_hs_initialize(void);
-extern int wts_hs_new_channel_connection(HsStablePtr, IWTSVirtualChannel *, HsStablePtr *);
+extern int wts_hs_new_channel_connection(HsStablePtr, IWTSVirtualChannel *, int *, HsStablePtr *);
 extern int wts_hs_data_received(HsStablePtr, const void *, ULONG);
 extern int wts_hs_closed(HsStablePtr);
 
@@ -221,7 +221,7 @@ STDMETHODIMP_(ULONG) ccb_release(IWTSVirtualChannelCallback *This)
     LONG refs = InterlockedDecrement(&ccb->refs);
     log_message("ccb_release %p %ld", ccb, refs);
     if (refs == 0) {
-        if (ccb->channel_callback != NULL)
+        if (ccb->channel_callback != (HsStablePtr) -1)
             hs_free_stable_ptr(ccb->channel_callback);
         free(ccb);
     }
@@ -297,28 +297,29 @@ STDMETHODIMP lcb_on_new_channel_connection(
 {
     struct listener_callback *lcb;
     struct channel_callback *ccb;
+    int accept;
     lcb = (struct listener_callback *) This;
-    log_message("lcb_on_new_channel_connection %p pChannel=%p", lcb, pChannel);
     ccb = malloc(sizeof(struct channel_callback));
     if (ccb == NULL) {
-        log_message("lcb_on_new_channel_connection %p %p: malloc failed", lcb, pChannel);
+        log_message("lcb_on_new_channel_connection %p pChannel=%p: malloc failed", lcb, pChannel);
         return E_OUTOFMEMORY;
     }
-    log_message("lcb_on_new_channel_connection %p %p -> created %p", lcb, pChannel, ccb);
+    log_message("lcb_on_new_channel_connection %p pChannel=%p -> %p", lcb, pChannel, ccb);
     ccb->iface.lpVtbl = &channel_callback_vtbl;
     ccb->refs = 1;
-    if (wts_hs_new_channel_connection(lcb->listener, pChannel, &ccb->channel_callback) < 0) {
+    if (wts_hs_new_channel_connection(lcb->listener, pChannel, &accept, &ccb->channel_callback) < 0) {
         ccb->iface.lpVtbl->Release(&ccb->iface);
         return E_UNEXPECTED;
     }
-    if (ccb->channel_callback == NULL) {
+    if (!accept) {
+        ccb->channel_callback = (HsStablePtr) -1;
+        ccb->iface.lpVtbl->Release(&ccb->iface);
         *pbAccept = FALSE;
         *ppCallback = NULL;
-        ccb->iface.lpVtbl->Release(&ccb->iface);
-        return S_OK;
+    } else {
+        *pbAccept = TRUE;
+        *ppCallback = &ccb->iface;
     }
-    *pbAccept = TRUE;
-    *ppCallback = &ccb->iface;
     return S_OK;
 }
 

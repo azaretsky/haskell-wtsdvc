@@ -18,9 +18,9 @@ import Foreign (
     Ptr,
     StablePtr,
     castPtr,
-    castPtrToStablePtr,
     deRefStablePtr,
     finalizeForeignPtr,
+    fromBool,
     newForeignPtr,
     newStablePtr,
     nullPtr,
@@ -87,18 +87,23 @@ createListener channelName listenerCallback =
 newChannelConnection
     :: StablePtr ListenerCallback
     -> Ptr Channel
+    -> Ptr CInt
     -> Ptr (StablePtr ChannelCallback)
     -> IO CInt
-newChannelConnection spListener p spCbPtr = catchAllExceptions "newChannelConnection" $ do
+newChannelConnection spListener p acceptPtr spCbPtr = catchAllExceptions "newChannelConnection" $ do
     listener <- deRefStablePtr spListener
     channel@(Channel m) <- wrapChannel p
     let releaseChannel = swapMVar m Nothing >>= maybe (return ()) finalizeForeignPtr
     maybeHandler <- listener channel `onException` releaseChannel
-    spCb <- case maybeHandler of
-        Nothing -> releaseChannel >> return (castPtrToStablePtr nullPtr)
-        Just (cbData, cbClosed) ->
-            newStablePtr (cbData, releaseChannel >> cbClosed)
-    poke spCbPtr spCb
+    accept <- case maybeHandler of
+        Nothing -> do
+            releaseChannel
+            return False
+        Just (cbData, cbClosed) -> do
+            spCb <- newStablePtr (cbData, releaseChannel >> cbClosed)
+            poke spCbPtr spCb
+            return True
+    poke acceptPtr $ fromBool accept
 
 dataReceived :: StablePtr ChannelCallback -> Ptr a -> Word32 -> IO CInt
 dataReceived spCbPtr buf len = catchAllExceptions "dataReceived" $ do
@@ -114,6 +119,7 @@ channelClosed spCbPtr = catchAllExceptions "channelClosed" $ do
 foreign export ccall "wts_hs_new_channel_connection" newChannelConnection
     :: StablePtr ListenerCallback
     -> Ptr Channel
+    -> Ptr CInt
     -> Ptr (StablePtr ChannelCallback)
     -> IO CInt
 
