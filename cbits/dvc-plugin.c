@@ -96,35 +96,43 @@ void iid_to_string(const REFIID iid, char out[IID_STRING_BUF_SIZE])
     );
 }
 
-static
-STDMETHODIMP plugin_query_interface(IWTSPlugin *This, REFIID riid, void **ppvObject)
-{
-    char iid[IID_STRING_BUF_SIZE] = {0};
-    if (riid == NULL) {
-        log_message("plugin_query_interface riid is NULL");
-        return E_INVALIDARG;
+#define QUERY_INTERFACE_IMP(iface, name) \
+    static \
+    STDMETHODIMP name(iface *This, REFIID riid, void **ppvObject) \
+    { \
+        char iid[IID_STRING_BUF_SIZE] = {0}; \
+        if (riid == NULL) { \
+            log_message(#name " %p riid is NULL", This); \
+            return E_INVALIDARG; \
+        } \
+        iid_to_string(riid, iid); \
+        if (!IsEqualIID(riid, &IID_##iface) && !IsEqualIID(riid, &IID_IUnknown)) { \
+            log_message(#name " %p unknown iid %s", This, iid); \
+            return E_NOINTERFACE; \
+        } \
+        if (ppvObject == NULL) { \
+            log_message(#name " %p %s ppvObject is NULL", This, iid); \
+            return E_POINTER; \
+        } \
+        log_message(#name " %p %s", This, iid); \
+        This->lpVtbl->AddRef(This); \
+        *ppvObject = This; \
+        return S_OK; \
     }
-    iid_to_string(riid, iid);
-    log_message("plugin_query_interface %s", iid);
-    if (!IsEqualIID(riid, &IID_IWTSPlugin) && !IsEqualIID(riid, &IID_IUnknown))
-        return E_NOINTERFACE;
-    if (ppvObject == NULL)
-        return E_POINTER;
-    *ppvObject = This;
-    return S_OK;
-}
+
+QUERY_INTERFACE_IMP(IWTSPlugin, plugin_query_interface)
 
 static
 STDMETHODIMP_(ULONG) plugin_add_ref(IWTSPlugin *This)
 {
-    log_message("plugin_add_ref");
+    log_message("plugin_add_ref %p", This);
     return 1;
 }
 
 static
 STDMETHODIMP_(ULONG) plugin_release(IWTSPlugin *This)
 {
-    log_message("plugin_release");
+    log_message("plugin_release %p", This);
     return 0;
 }
 
@@ -139,7 +147,7 @@ STDMETHODIMP plugin_initialize(IWTSPlugin *This, IWTSVirtualChannelManager *pCha
     char **args = argv;
     refs = pChannelMgr->lpVtbl->AddRef(pChannelMgr);
     channel_manager = pChannelMgr;
-    log_message("plugin_initialize channel manager references %lu", refs);
+    log_message("plugin_initialize %p channel manager %p references %lu", This, pChannelMgr, refs);
     hs_init(&argc, &args);
     if (wts_hs_initialize() < 0) {
         This->lpVtbl->Terminated(This);
@@ -151,14 +159,14 @@ STDMETHODIMP plugin_initialize(IWTSPlugin *This, IWTSVirtualChannelManager *pCha
 static
 STDMETHODIMP plugin_connected(IWTSPlugin *This)
 {
-    log_message("plugin_connected");
+    log_message("plugin_connected %p", This);
     return S_OK;
 }
 
 static
 STDMETHODIMP plugin_disconnected(IWTSPlugin *This, DWORD dwDisconnectCode)
 {
-    log_message("plugin_disconnected 0x%08lx", dwDisconnectCode);
+    log_message("plugin_disconnected %p dwDisconnectCode=0x%08lx", This, dwDisconnectCode);
     return S_OK;
 }
 
@@ -171,7 +179,7 @@ STDMETHODIMP plugin_terminated(IWTSPlugin *This)
     cm = channel_manager;
     channel_manager = NULL;
     refs = cm->lpVtbl->Release(cm);
-    log_message("plugin_terminated channel manager references %lu", refs);
+    log_message("plugin_terminated %p channel manager %p references %lu", This, cm, refs);
     return S_OK;
 }
 
@@ -195,26 +203,7 @@ struct channel_callback {
     HsStablePtr channel_callback;
 };
 
-static
-STDMETHODIMP ccb_query_interface(IWTSVirtualChannelCallback *This, REFIID riid, void **ppvObject)
-{
-    char iid[IID_STRING_BUF_SIZE] = {0};
-    if (riid == NULL) {
-        log_message("ccb_query_interface %p riid is NULL", This);
-        return E_INVALIDARG;
-    }
-    iid_to_string(riid, iid);
-    log_message("ccb_query_interface %p %s", This, iid);
-    if (!IsEqualIID(riid, &IID_IWTSVirtualChannelCallback) && !IsEqualIID(riid, &IID_IUnknown)) {
-        log_message("ccb_query_interface %p: unknown interface", This);
-        return E_NOINTERFACE;
-    }
-    if (ppvObject == NULL)
-        return E_POINTER;
-    This->lpVtbl->AddRef(This);
-    *ppvObject = This;
-    return S_OK;
-}
+QUERY_INTERFACE_IMP(IWTSVirtualChannelCallback, ccb_query_interface)
 
 static
 STDMETHODIMP_(ULONG) ccb_add_ref(IWTSVirtualChannelCallback *This)
@@ -273,26 +262,7 @@ struct listener_callback {
     HsStablePtr listener;
 };
 
-static
-STDMETHODIMP lcb_query_interface(IWTSListenerCallback *This, REFIID riid, void **ppvObject)
-{
-    char iid[IID_STRING_BUF_SIZE] = {0};
-    if (riid == NULL) {
-        log_message("lcb_query_interface %p riid is NULL", This);
-        return E_INVALIDARG;
-    }
-    iid_to_string(riid, iid);
-    log_message("lcb_query_interface %p %s", This, iid);
-    if (!IsEqualIID(riid, &IID_IWTSListenerCallback) && !IsEqualIID(riid, &IID_IUnknown)) {
-        log_message("lcb_query_interface %p: unknown interface", This);
-        return E_NOINTERFACE;
-    }
-    if (ppvObject == NULL)
-        return E_POINTER;
-    This->lpVtbl->AddRef(This);
-    *ppvObject = This;
-    return S_OK;
-}
+QUERY_INTERFACE_IMP(IWTSListenerCallback, lcb_query_interface)
 
 static
 STDMETHODIMP_(ULONG) lcb_add_ref(IWTSListenerCallback *This)
@@ -439,7 +409,7 @@ STDAPI VirtualChannelGetInstance(REFIID refiid, ULONG *pNumObjs, VOID **ppObjArr
             log_message("VirtualChannelGetInstance *pNumObjs=%lu is too small", *pNumObjs);
             return E_INVALIDARG;
         }
-        log_message("VirtualChannelGetInstance get plugin instance");
+        log_message("VirtualChannelGetInstance get plugin instance %p", &plugin);
         ppObjArray[0] = &plugin;
     } else
         log_message("VirtualChannelGetInstance get number of instances");
