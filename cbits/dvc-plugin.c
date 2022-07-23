@@ -336,18 +336,18 @@ int wts_create_listener(const char *channel_name, HsStablePtr listener)
     HRESULT hr;
     lcb = malloc(sizeof(struct listener_callback));
     if (lcb == NULL) {
-        log_message("wts_create_listener %s: malloc failed", channel_name);
+        log_message("wts_create_listener %s listener=%p: malloc failed", channel_name, listener);
         hs_free_stable_ptr(listener);
         return -1;
     }
-    log_message("wts_create_listener %s -> created %p", channel_name, lcb);
+    log_message("wts_create_listener %s listener=%p -> %p", channel_name, listener, lcb);
     lcb->iface.lpVtbl = &listener_callback_vtbl;
     lcb->refs = 1;
     lcb->listener = listener;
     hr = channel_manager->lpVtbl->CreateListener(channel_manager, channel_name, 0, &lcb->iface, NULL);
     lcb->iface.lpVtbl->Release(&lcb->iface);
     if (hr != S_OK) {
-        log_message("wts_create_listener %s: channel manager failed for %p error 0x%08lx", channel_name, lcb, hr);
+        log_message("wts_create_listener %s (%p): channel manager error 0x%08lx", channel_name, lcb, hr);
         return -1;
     }
     return 0;
@@ -368,21 +368,15 @@ void wts_unref_channel(IWTSVirtualChannel *channel)
 int wts_write_channel(IWTSVirtualChannel *channel, void *bytes, ULONG len)
 {
     HRESULT hr = channel->lpVtbl->Write(channel, len, bytes, NULL);
-    if (hr != S_OK) {
-        log_message("wts_write_channel %p error 0x%08lx", channel, hr);
-        return -1;
-    }
-    return 0;
+    log_message("wts_write_channel %p bytes=%p len=%lu -> 0x%08lx", channel, bytes, len, hr);
+    return (hr == S_OK) ? 0 : -1;
 }
 
 int wts_close_channel(IWTSVirtualChannel *channel)
 {
     HRESULT hr = channel->lpVtbl->Close(channel);
-    if (hr != S_OK) {
-        log_message("wts_close_channel %p error 0x%08lx", channel, hr);
-        return -1;
-    }
-    return 0;
+    log_message("wts_close_channel %p -> 0x%08lx", channel, hr);
+    return (hr == S_OK) ? 0 : -1;
 }
 
 STDAPI VirtualChannelGetInstance(REFIID refiid, ULONG *pNumObjs, VOID **ppObjArray)
