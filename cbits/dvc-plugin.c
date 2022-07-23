@@ -134,7 +134,7 @@ static
 STDMETHODIMP plugin_initialize(IWTSPlugin *This, IWTSVirtualChannelManager *pChannelMgr)
 {
     ULONG refs;
-    int argc;
+    int argc = 1;
     char *argv[] = {"wts-dvc-plugin", NULL};
     char **args = argv;
     refs = pChannelMgr->lpVtbl->AddRef(pChannelMgr);
