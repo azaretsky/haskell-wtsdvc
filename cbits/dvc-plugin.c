@@ -297,7 +297,6 @@ STDMETHODIMP lcb_on_new_channel_connection(
 {
     struct listener_callback *lcb;
     struct channel_callback *ccb;
-    HsStablePtr channel_callback;
     lcb = (struct listener_callback *) This;
     log_message("lcb_on_new_channel_connection %p pChannel=%p", lcb, pChannel);
     ccb = malloc(sizeof(struct channel_callback));
@@ -308,18 +307,16 @@ STDMETHODIMP lcb_on_new_channel_connection(
     log_message("lcb_on_new_channel_connection %p %p -> created %p", lcb, pChannel, ccb);
     ccb->iface.lpVtbl = &channel_callback_vtbl;
     ccb->refs = 1;
-    ccb->channel_callback = NULL;
-    if (wts_hs_new_channel_connection(lcb->listener, pChannel, &channel_callback) < 0) {
+    if (wts_hs_new_channel_connection(lcb->listener, pChannel, &ccb->channel_callback) < 0) {
         ccb->iface.lpVtbl->Release(&ccb->iface);
         return E_UNEXPECTED;
     }
-    if (channel_callback == NULL) {
+    if (ccb->channel_callback == NULL) {
         *pbAccept = FALSE;
         *ppCallback = NULL;
         ccb->iface.lpVtbl->Release(&ccb->iface);
         return S_OK;
     }
-    ccb->channel_callback = channel_callback;
     *pbAccept = TRUE;
     *ppCallback = &ccb->iface;
     return S_OK;
