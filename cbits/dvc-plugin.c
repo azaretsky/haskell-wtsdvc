@@ -10,6 +10,8 @@ extern int wts_hs_new_channel_connection(HsStablePtr, IWTSVirtualChannel *, int 
 extern int wts_hs_data_received(HsStablePtr, const void *, ULONG);
 extern int wts_hs_closed(HsStablePtr);
 
+#define INVALID_STABLE_PTR ((HsStablePtr) -1)
+
 static
 void setup_std_handles(void)
 {
@@ -221,7 +223,7 @@ STDMETHODIMP_(ULONG) ccb_release(IWTSVirtualChannelCallback *This)
     LONG refs = InterlockedDecrement(&ccb->refs);
     log_message("ccb_release %p %ld", ccb, refs);
     if (refs == 0) {
-        if (ccb->channel_callback != (HsStablePtr) -1)
+        if (ccb->channel_callback != INVALID_STABLE_PTR)
             hs_free_stable_ptr(ccb->channel_callback);
         free(ccb);
     }
@@ -297,6 +299,7 @@ STDMETHODIMP lcb_on_new_channel_connection(
 {
     struct listener_callback *lcb;
     struct channel_callback *ccb;
+    HsStablePtr channel_callback;
     int accept;
     lcb = (struct listener_callback *) This;
     ccb = malloc(sizeof(struct channel_callback));
@@ -307,16 +310,17 @@ STDMETHODIMP lcb_on_new_channel_connection(
     log_message("lcb_on_new_channel_connection %p pChannel=%p -> %p", lcb, pChannel, ccb);
     ccb->iface.lpVtbl = &channel_callback_vtbl;
     ccb->refs = 1;
-    if (wts_hs_new_channel_connection(lcb->listener, pChannel, &accept, &ccb->channel_callback) < 0) {
+    ccb->channel_callback = INVALID_STABLE_PTR;
+    if (wts_hs_new_channel_connection(lcb->listener, pChannel, &accept, &channel_callback) < 0) {
         ccb->iface.lpVtbl->Release(&ccb->iface);
         return E_UNEXPECTED;
     }
     if (!accept) {
-        ccb->channel_callback = (HsStablePtr) -1;
         ccb->iface.lpVtbl->Release(&ccb->iface);
         *pbAccept = FALSE;
         *ppCallback = NULL;
     } else {
+        ccb->channel_callback = channel_callback;
         *pbAccept = TRUE;
         *ppCallback = &ccb->iface;
     }
