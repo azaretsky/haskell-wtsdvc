@@ -33,7 +33,7 @@ import System.IO (hPutStrLn, stderr)
 import System.IO.Error (illegalOperationErrorType, ioeSetErrorString, mkIOError)
 
 reportUnhandledException :: String -> SomeException -> IO ()
-reportUnhandledException loc e = hPutStrLn stderr $ loc <> ": unhandled exception " <> displayException e
+reportUnhandledException loc e = hPutStrLn stderr $ loc <> " unhandled exception: " <> displayException e
 
 catchAllExceptions :: String -> IO () -> IO CInt
 catchAllExceptions loc action =
