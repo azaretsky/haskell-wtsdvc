@@ -1,5 +1,5 @@
 module Network.WtsDvc.Client (
-    Channel,
+    ChannelHolder,
     catchAllExceptions,
     chWrite,
     chClose,
@@ -7,8 +7,7 @@ module Network.WtsDvc.Client (
 ) where
 
 import Control.Concurrent (MVar, newMVar, swapMVar, withMVar)
-import Control.Monad (when)
-import Control.Exception (SomeException, catch, displayException, finally, onException)
+import Control.Exception (SomeException, catch, displayException, onException)
 import qualified Data.ByteString as B (ByteString, packCStringLen)
 import qualified Data.ByteString.Unsafe as B (unsafeUseAsCStringLen)
 import Data.Word (Word32)
@@ -23,7 +22,6 @@ import Foreign (
     fromBool,
     newForeignPtr,
     newStablePtr,
-    nullPtr,
     poke,
     throwIfNeg_,
     withForeignPtr
@@ -41,42 +39,57 @@ catchAllExceptions loc action =
         (action >> return 0)
         (\e -> reportUnhandledException loc e >> return (-1))
 
-newtype Channel = Channel (MVar (Maybe (ForeignPtr Channel)))
+data Channel
 
-wrapChannel :: Ptr Channel -> IO Channel
+wrapChannel :: Ptr Channel -> IO (ForeignPtr Channel)
 wrapChannel p = do
     c_refChannel p
-    f <- newForeignPtr channelFinalizer p
-    Channel <$> newMVar (Just f)
+    newForeignPtr channelFinalizer p
 
-chWrite :: Channel -> B.ByteString -> IO ()
-chWrite (Channel m) bytes = do
-    p <- withMVar m $ \case
-        Nothing -> return nullPtr
-        Just f -> withForeignPtr f $ \p -> do
-            c_refChannel p
-            return p
-    when (p == nullPtr) $ ioError $
-        mkIOError illegalOperationErrorType "chWrite" Nothing Nothing
-        `ioeSetErrorString`
-        "channel is closed"
-    throwIfNeg_ (const "chWrite") $ finally
-        (B.unsafeUseAsCStringLen bytes $ \(bytesPtr, len) ->
-            c_writeChannel p bytesPtr (fromIntegral len))
-        (c_unrefChannel p)
+refChannel :: ForeignPtr Channel -> IO (ForeignPtr Channel)
+refChannel f = withForeignPtr f wrapChannel
 
-chClose :: Channel -> IO ()
-chClose (Channel m) = do
-    c <- swapMVar m Nothing
-    case c of
-        Nothing -> return ()
-        Just f -> throwIfNeg_ (const "chClose") $ do
-            res <- withForeignPtr f c_closeChannel
-            finalizeForeignPtr f
-            return res
+useChannel :: String -> ForeignPtr Channel -> (Ptr Channel -> IO CInt) -> IO ()
+useChannel loc f action = throwIfNeg_ (const loc) $ do
+    res <- withForeignPtr f action
+    finalizeForeignPtr f
+    return res
+
+closeChannel :: ForeignPtr Channel -> IO ()
+closeChannel f = useChannel "closeChannel" f c_closeChannel
+
+writeChannel :: ForeignPtr Channel -> Ptr a -> Int -> IO ()
+writeChannel f bytes len = useChannel "writeChannel" f $
+    \p -> c_writeChannel p bytes (fromIntegral len)
+
+type ChannelHolder = MVar (Maybe (ForeignPtr Channel))
+
+holdChannel :: ForeignPtr Channel -> IO ChannelHolder
+holdChannel = newMVar . Just
+
+consumeChannel :: ChannelHolder -> (ForeignPtr Channel -> IO ()) -> IO ()
+consumeChannel m action = swapMVar m Nothing >>= maybe (return ()) action
+
+chWrite :: ChannelHolder -> B.ByteString -> IO ()
+chWrite m bytes = do
+    channelState <- withMVar m $ \case
+        Nothing -> return Nothing
+        Just f -> Just <$> refChannel f
+    case channelState of
+        Nothing -> ioError $
+            mkIOError illegalOperationErrorType "chWrite" Nothing Nothing
+            `ioeSetErrorString`
+            "channel is closed"
+        Just f -> B.unsafeUseAsCStringLen bytes $ uncurry $ writeChannel f
+
+chClose :: ChannelHolder -> IO ()
+chClose m = consumeChannel m closeChannel
+
+releaseChannel :: ChannelHolder -> IO ()
+releaseChannel m = consumeChannel m finalizeForeignPtr
 
 type ChannelCallback = (B.ByteString -> IO (), IO ())
-type ListenerCallback = Channel -> IO (Maybe ChannelCallback)
+type ListenerCallback = ChannelHolder -> IO (Maybe ChannelCallback)
 
 createListener :: String -> ListenerCallback -> IO ()
 createListener channelName listenerCallback =
@@ -92,15 +105,14 @@ newChannelConnection
     -> IO CInt
 newChannelConnection spListener p acceptPtr spCbPtr = catchAllExceptions "newChannelConnection" $ do
     listener <- deRefStablePtr spListener
-    channel@(Channel m) <- wrapChannel p
-    let releaseChannel = swapMVar m Nothing >>= maybe (return ()) finalizeForeignPtr
-    maybeHandler <- listener channel `onException` releaseChannel
+    m <- wrapChannel p >>= holdChannel
+    maybeHandler <- listener m `onException` releaseChannel m
     accept <- case maybeHandler of
         Nothing -> do
-            releaseChannel
+            releaseChannel m
             return False
         Just (cbData, cbClosed) -> do
-            spCb <- newStablePtr (cbData, releaseChannel >> cbClosed)
+            spCb <- newStablePtr (cbData, releaseChannel m >> cbClosed)
             poke spCbPtr spCb
             return True
     poke acceptPtr $ fromBool accept
@@ -142,9 +154,8 @@ foreign import ccall "wts_ref_channel" c_refChannel
     :: Ptr Channel
     -> IO ()
 
-foreign import ccall "wts_unref_channel" c_unrefChannel
-    :: Ptr Channel
-    -> IO ()
+foreign import ccall "&wts_unref_channel" channelFinalizer
+    :: FinalizerPtr Channel
 
 foreign import ccall "wts_write_channel" c_writeChannel
     :: Ptr Channel
@@ -155,6 +166,3 @@ foreign import ccall "wts_write_channel" c_writeChannel
 foreign import ccall "wts_close_channel" c_closeChannel
     :: Ptr Channel
     -> IO CInt
-
-foreign import ccall "&wts_unref_channel" channelFinalizer
-    :: FinalizerPtr Channel
