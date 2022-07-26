@@ -10,6 +10,7 @@ import Control.Concurrent (MVar, newMVar, swapMVar, withMVar)
 import Control.Exception (SomeException, catch, displayException, onException)
 import qualified Data.ByteString as B (ByteString, packCStringLen)
 import qualified Data.ByteString.Unsafe as B (unsafeUseAsCStringLen)
+import Data.Foldable (traverse_)
 import Data.Word (Word32)
 import Foreign (
     FinalizerPtr,
@@ -46,9 +47,6 @@ wrapChannel p = do
     c_refChannel p
     newForeignPtr channelFinalizer p
 
-refChannel :: ForeignPtr Channel -> IO (ForeignPtr Channel)
-refChannel f = withForeignPtr f wrapChannel
-
 useChannel :: String -> ForeignPtr Channel -> (Ptr Channel -> IO CInt) -> IO ()
 useChannel loc f action = throwIfNeg_ (const loc) $ do
     res <- withForeignPtr f action
@@ -67,14 +65,15 @@ type ChannelHolder = MVar (Maybe (ForeignPtr Channel))
 holdChannel :: ForeignPtr Channel -> IO ChannelHolder
 holdChannel = newMVar . Just
 
+extractChannel :: ChannelHolder -> IO (Maybe (ForeignPtr Channel))
+extractChannel m = withMVar m . traverse $ \f -> withForeignPtr f wrapChannel
+
 consumeChannel :: ChannelHolder -> (ForeignPtr Channel -> IO ()) -> IO ()
-consumeChannel m action = swapMVar m Nothing >>= maybe (return ()) action
+consumeChannel m action = swapMVar m Nothing >>= traverse_ action
 
 chWrite :: ChannelHolder -> B.ByteString -> IO ()
 chWrite m bytes = do
-    channelState <- withMVar m $ \case
-        Nothing -> return Nothing
-        Just f -> Just <$> refChannel f
+    channelState <- extractChannel m
     case channelState of
         Nothing -> ioError $
             mkIOError illegalOperationErrorType "chWrite" Nothing Nothing
