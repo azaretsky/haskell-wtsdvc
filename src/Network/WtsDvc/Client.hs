@@ -57,8 +57,8 @@ closeChannel :: ForeignPtr Channel -> IO ()
 closeChannel f = useChannel "closeChannel" f c_closeChannel
 
 writeChannel :: ForeignPtr Channel -> Ptr a -> Int -> IO ()
-writeChannel f bytes len = useChannel "writeChannel" f $
-    \p -> c_writeChannel p bytes (fromIntegral len)
+writeChannel f bytes len = useChannel "writeChannel" f $ \p ->
+    c_writeChannel p bytes (fromIntegral len)
 
 type ChannelHolder = MVar (Maybe (ForeignPtr Channel))
 
@@ -79,7 +79,7 @@ chWrite m bytes = do
             mkIOError illegalOperationErrorType "chWrite" Nothing Nothing
             `ioeSetErrorString`
             "channel is closed"
-        Just f -> B.unsafeUseAsCStringLen bytes $ uncurry $ writeChannel f
+        Just f -> B.unsafeUseAsCStringLen bytes . uncurry $ writeChannel f
 
 chClose :: ChannelHolder -> IO ()
 chClose m = consumeChannel m closeChannel
