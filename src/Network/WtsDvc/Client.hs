@@ -40,35 +40,35 @@ catchAllExceptions loc action =
         (action >> return 0)
         (\e -> reportUnhandledException loc e >> return (-1))
 
-data Channel
+data WTSChannel
 
-wrapChannel :: Ptr Channel -> IO (ForeignPtr Channel)
+wrapChannel :: Ptr WTSChannel -> IO (ForeignPtr WTSChannel)
 wrapChannel p = do
     c_refChannel p
     newForeignPtr channelFinalizer p
 
-useChannel :: String -> ForeignPtr Channel -> (Ptr Channel -> IO CInt) -> IO ()
+useChannel :: String -> ForeignPtr WTSChannel -> (Ptr WTSChannel -> IO CInt) -> IO ()
 useChannel loc f action = throwIfNeg_ (const loc) $ do
     res <- withForeignPtr f action
     finalizeForeignPtr f
     return res
 
-closeChannel :: ForeignPtr Channel -> IO ()
+closeChannel :: ForeignPtr WTSChannel -> IO ()
 closeChannel f = useChannel "closeChannel" f c_closeChannel
 
-writeChannel :: ForeignPtr Channel -> Ptr a -> Int -> IO ()
+writeChannel :: ForeignPtr WTSChannel -> Ptr a -> Int -> IO ()
 writeChannel f bytes len = useChannel "writeChannel" f $ \p ->
     c_writeChannel p bytes (fromIntegral len)
 
-type ChannelHolder = MVar (Maybe (ForeignPtr Channel))
+type ChannelHolder = MVar (Maybe (ForeignPtr WTSChannel))
 
-holdChannel :: ForeignPtr Channel -> IO ChannelHolder
+holdChannel :: ForeignPtr WTSChannel -> IO ChannelHolder
 holdChannel = newMVar . Just
 
-extractChannel :: ChannelHolder -> IO (Maybe (ForeignPtr Channel))
+extractChannel :: ChannelHolder -> IO (Maybe (ForeignPtr WTSChannel))
 extractChannel m = withMVar m . traverse $ \f -> withForeignPtr f wrapChannel
 
-consumeChannel :: ChannelHolder -> (ForeignPtr Channel -> IO ()) -> IO ()
+consumeChannel :: ChannelHolder -> (ForeignPtr WTSChannel -> IO ()) -> IO ()
 consumeChannel m action = swapMVar m Nothing >>= traverse_ action
 
 chWrite :: ChannelHolder -> B.ByteString -> IO ()
@@ -98,7 +98,7 @@ createListener channelName listenerCallback =
 
 newChannelConnection
     :: StablePtr ListenerCallback
-    -> Ptr Channel
+    -> Ptr WTSChannel
     -> Ptr CInt
     -> Ptr (StablePtr ChannelCallback)
     -> IO CInt
@@ -129,7 +129,7 @@ channelClosed spCbPtr = catchAllExceptions "channelClosed" $ do
 
 foreign export ccall "wts_hs_new_channel_connection" newChannelConnection
     :: StablePtr ListenerCallback
-    -> Ptr Channel
+    -> Ptr WTSChannel
     -> Ptr CInt
     -> Ptr (StablePtr ChannelCallback)
     -> IO CInt
@@ -150,18 +150,18 @@ foreign import ccall "wts_create_listener" c_createListener
     -> IO CInt
 
 foreign import ccall "wts_ref_channel" c_refChannel
-    :: Ptr Channel
+    :: Ptr WTSChannel
     -> IO ()
 
 foreign import ccall "&wts_unref_channel" channelFinalizer
-    :: FinalizerPtr Channel
+    :: FinalizerPtr WTSChannel
 
 foreign import ccall "wts_write_channel" c_writeChannel
-    :: Ptr Channel
+    :: Ptr WTSChannel
     -> Ptr a
     -> Word32
     -> IO CInt
 
 foreign import ccall "wts_close_channel" c_closeChannel
-    :: Ptr Channel
+    :: Ptr WTSChannel
     -> IO CInt
