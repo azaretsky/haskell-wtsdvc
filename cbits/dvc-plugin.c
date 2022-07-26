@@ -13,57 +13,30 @@ extern int wts_hs_closed(HsStablePtr);
 #define INVALID_STABLE_PTR ((HsStablePtr) -1)
 
 static
+void tweak_std_handle(DWORD nStdHandle, int desc, FILE *stream, int flags)
+{
+    int fd;
+    fd = _open_osfhandle((intptr_t) GetStdHandle(nStdHandle), flags);
+    if (fd == -1)
+        return;
+    if (_dup2(fd, desc) != -1)
+        stream->_file = desc;
+    _close(fd);
+}
+
+static
 void setup_std_handles(void)
 {
-    SECURITY_ATTRIBUTES sa = {
-        .nLength = sizeof(sa),
-        .lpSecurityDescriptor = NULL,
-        .bInheritHandle = TRUE
-    };
-    HANDLE h;
-    DWORD path_length;
-    int fd;
-    char path[256];
-    path_length = ExpandEnvironmentStrings("%USERPROFILE%\\dvc-plugin.log", path, sizeof(path));
-    if (path_length > sizeof(path)) {
-        fprintf(stderr, "log file path is too long: %lu\n", path_length);
+    static int initialized = 0;
+    if (initialized)
+        return;
+    initialized = 1;
+    if (!AttachConsole(ATTACH_PARENT_PROCESS)) {
         return;
     }
-    if (path_length == 0) {
-        fprintf(stderr, "ExpandEnvironmentStrings %lu\n", GetLastError());
-        return;
-    }
-    h = CreateFile(
-        path,
-        GENERIC_WRITE,
-        FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
-        &sa,
-        OPEN_ALWAYS,
-        FILE_ATTRIBUTE_NORMAL,
-        NULL
-    );
-    if (h == INVALID_HANDLE_VALUE) {
-        fprintf(stderr, "CreateFile(%s) %lu\n", path, GetLastError());
-        return;
-    }
-    if (!SetStdHandle(STD_OUTPUT_HANDLE, h) || !SetStdHandle(STD_ERROR_HANDLE, h)) {
-        fprintf(stderr, "SetStdHandle %lu\n", GetLastError());
-        CloseHandle(h);
-        return;
-    }
-    fd = _open_osfhandle((intptr_t) h, _O_APPEND);
-    if (fd == -1) {
-        fprintf(stderr, "_open_osfhandle %s (%d)\n", strerror(errno), errno);
-        CloseHandle(h);
-        return;
-    }
-    if (_dup2(fd, 1) == -1 || _dup2(fd, 2) == -1) {
-        fprintf(stderr, "_dup2 %s (%d)\n", strerror(errno), errno);
-    } else {
-        stdout->_file = 1;
-        stderr->_file = 2;
-    }
-    _close(fd);
+    tweak_std_handle(STD_INPUT_HANDLE, 0, stdin, _O_RDONLY);
+    tweak_std_handle(STD_OUTPUT_HANDLE, 1, stdout, _O_APPEND);
+    tweak_std_handle(STD_ERROR_HANDLE, 2, stderr, _O_APPEND);
 }
 
 __attribute__ ((format (printf, 1, 2)))
