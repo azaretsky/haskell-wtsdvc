@@ -1,8 +1,6 @@
 module Network.WtsDvc.Client (
-    ChannelHolder,
+    Channel (..),
     catchAllExceptions,
-    chWrite,
-    chClose,
     createListener
 ) where
 
@@ -31,6 +29,8 @@ import Foreign.C (CInt (..), CString, withCAString)
 import System.IO (hPutStrLn, stderr)
 import System.IO.Error (illegalOperationErrorType, ioeSetErrorString, mkIOError)
 
+data Channel = Channel {submit :: B.ByteString -> IO (), close :: IO ()}
+
 reportUnhandledException :: String -> SomeException -> IO ()
 reportUnhandledException loc e = hPutStrLn stderr $ loc <> " unhandled exception: " <> displayException e
 
@@ -47,18 +47,19 @@ wrapChannel p = do
     c_refChannel p
     newForeignPtr channelFinalizer p
 
-useChannel :: String -> ForeignPtr WTSChannel -> (Ptr WTSChannel -> IO CInt) -> IO ()
-useChannel loc f action = throwIfNeg_ (const loc) $ do
+useChannel :: String -> (Ptr WTSChannel -> IO CInt) -> ForeignPtr WTSChannel -> IO ()
+useChannel loc action f = throwIfNeg_ (const loc) $ do
     res <- withForeignPtr f action
     finalizeForeignPtr f
     return res
 
 closeChannel :: ForeignPtr WTSChannel -> IO ()
-closeChannel f = useChannel "closeChannel" f c_closeChannel
+closeChannel = useChannel "closeChannel" c_closeChannel
 
-writeChannel :: ForeignPtr WTSChannel -> Ptr a -> Int -> IO ()
-writeChannel f bytes len = useChannel "writeChannel" f $ \p ->
-    c_writeChannel p bytes (fromIntegral len)
+writeChannel :: B.ByteString -> ForeignPtr WTSChannel -> IO ()
+writeChannel bytes = useChannel "writeChannel" $ \p ->
+    B.unsafeUseAsCStringLen bytes $ \(bytesPtr, len) ->
+        c_writeChannel p bytesPtr (fromIntegral len)
 
 type ChannelHolder = MVar (Maybe (ForeignPtr WTSChannel))
 
@@ -71,24 +72,10 @@ extractChannel m = withMVar m . traverse $ \f -> withForeignPtr f wrapChannel
 consumeChannel :: ChannelHolder -> (ForeignPtr WTSChannel -> IO ()) -> IO ()
 consumeChannel m action = swapMVar m Nothing >>= traverse_ action
 
-chWrite :: ChannelHolder -> B.ByteString -> IO ()
-chWrite m bytes = do
-    channelState <- extractChannel m
-    case channelState of
-        Nothing -> ioError $
-            mkIOError illegalOperationErrorType "chWrite" Nothing Nothing
-            `ioeSetErrorString`
-            "channel is closed"
-        Just f -> B.unsafeUseAsCStringLen bytes . uncurry $ writeChannel f
-
-chClose :: ChannelHolder -> IO ()
-chClose m = consumeChannel m closeChannel
-
 releaseChannel :: ChannelHolder -> IO ()
 releaseChannel m = consumeChannel m finalizeForeignPtr
 
-type ChannelCallback = (B.ByteString -> IO (), IO ())
-type ListenerCallback = ChannelHolder -> IO (Maybe ChannelCallback)
+type ListenerCallback = Channel -> IO (Maybe Channel)
 
 createListener :: String -> ListenerCallback -> IO ()
 createListener channelName listenerCallback =
@@ -100,48 +87,56 @@ newChannelConnection
     :: StablePtr ListenerCallback
     -> Ptr WTSChannel
     -> Ptr CInt
-    -> Ptr (StablePtr ChannelCallback)
+    -> Ptr (StablePtr Channel)
     -> IO CInt
 newChannelConnection spListener p acceptPtr spCbPtr = catchAllExceptions "newChannelConnection" $ do
     listener <- deRefStablePtr spListener
     m <- wrapChannel p >>= holdChannel
-    maybeHandler <- listener m `onException` releaseChannel m
+    let output = Channel
+            { submit = \bytes -> extractChannel m >>= maybe throwClosed (writeChannel bytes)
+            , close = consumeChannel m closeChannel
+            }
+    maybeHandler <- listener output `onException` releaseChannel m
     accept <- case maybeHandler of
         Nothing -> do
             releaseChannel m
             return False
-        Just (cbData, cbClosed) -> do
-            spCb <- newStablePtr (cbData, releaseChannel m >> cbClosed)
+        Just channel -> do
+            spCb <- newStablePtr channel{close = releaseChannel m >> close channel}
             poke spCbPtr spCb
             return True
     poke acceptPtr $ fromBool accept
 
-dataReceived :: StablePtr ChannelCallback -> Ptr a -> Word32 -> IO CInt
-dataReceived spCbPtr buf len = catchAllExceptions "dataReceived" $ do
-    (cbData, _) <- deRefStablePtr spCbPtr
-    bytes <- B.packCStringLen (castPtr buf, fromIntegral len)
-    cbData bytes
+throwClosed :: IO a
+throwClosed = ioError $
+    mkIOError illegalOperationErrorType "channelWrite" Nothing Nothing
+    `ioeSetErrorString`
+    "channel is closed"
 
-channelClosed :: StablePtr ChannelCallback -> IO CInt
+dataReceived :: StablePtr Channel -> Ptr a -> Word32 -> IO CInt
+dataReceived spCbPtr buf len = catchAllExceptions "dataReceived" $ do
+    channel <- deRefStablePtr spCbPtr
+    B.packCStringLen (castPtr buf, fromIntegral len) >>= submit channel
+
+channelClosed :: StablePtr Channel -> IO CInt
 channelClosed spCbPtr = catchAllExceptions "channelClosed" $ do
-    (_, cbClosed) <- deRefStablePtr spCbPtr
-    cbClosed
+    deRefStablePtr spCbPtr >>= close
 
 foreign export ccall "wts_hs_new_channel_connection" newChannelConnection
     :: StablePtr ListenerCallback
     -> Ptr WTSChannel
     -> Ptr CInt
-    -> Ptr (StablePtr ChannelCallback)
+    -> Ptr (StablePtr Channel)
     -> IO CInt
 
 foreign export ccall "wts_hs_data_received" dataReceived
-    :: StablePtr ChannelCallback
+    :: StablePtr Channel
     -> Ptr a
     -> Word32
     -> IO CInt
 
 foreign export ccall "wts_hs_closed" channelClosed
-    :: StablePtr ChannelCallback
+    :: StablePtr Channel
     -> IO CInt
 
 foreign import ccall "wts_create_listener" c_createListener
