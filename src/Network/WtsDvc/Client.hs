@@ -67,13 +67,13 @@ holdChannel :: ForeignPtr WTSChannel -> IO ChannelHolder
 holdChannel = newMVar . Just
 
 extractChannel :: ChannelHolder -> IO (Maybe (ForeignPtr WTSChannel))
-extractChannel m = withMVar m . traverse $ \f -> withForeignPtr f wrapChannel
+extractChannel holder = withMVar holder . traverse $ \f -> withForeignPtr f wrapChannel
 
 consumeChannel :: ChannelHolder -> (ForeignPtr WTSChannel -> IO ()) -> IO ()
-consumeChannel m action = swapMVar m Nothing >>= traverse_ action
+consumeChannel holder action = swapMVar holder Nothing >>= traverse_ action
 
 releaseChannel :: ChannelHolder -> IO ()
-releaseChannel m = consumeChannel m finalizeForeignPtr
+releaseChannel holder = consumeChannel holder finalizeForeignPtr
 
 type ListenerCallback = Channel -> IO (Maybe Channel)
 
@@ -89,21 +89,20 @@ newChannelConnection
     -> Ptr CInt
     -> Ptr (StablePtr Channel)
     -> IO CInt
-newChannelConnection spListener p acceptPtr spCbPtr = catchAllExceptions "newChannelConnection" $ do
+newChannelConnection spListener outputPtr acceptPtr spCbPtr = catchAllExceptions "newChannelConnection" $ do
     listener <- deRefStablePtr spListener
-    m <- wrapChannel p >>= holdChannel
+    holder <- wrapChannel outputPtr >>= holdChannel
     let output = Channel
-            { submit = \bytes -> extractChannel m >>= maybe throwClosed (writeChannel bytes)
-            , close = consumeChannel m closeChannel
+            { submit = \bytes -> extractChannel holder >>= maybe throwClosed (writeChannel bytes)
+            , close = consumeChannel holder closeChannel
             }
-    maybeHandler <- listener output `onException` releaseChannel m
+    maybeHandler <- listener output `onException` releaseChannel holder
     accept <- case maybeHandler of
         Nothing -> do
-            releaseChannel m
+            releaseChannel holder
             return False
         Just channel -> do
-            spCb <- newStablePtr channel{close = releaseChannel m >> close channel}
-            poke spCbPtr spCb
+            poke spCbPtr =<< newStablePtr channel{close = releaseChannel holder >> close channel}
             return True
     poke acceptPtr $ fromBool accept
 
@@ -119,8 +118,7 @@ dataReceived spCbPtr buf len = catchAllExceptions "dataReceived" $ do
     B.packCStringLen (castPtr buf, fromIntegral len) >>= submit channel
 
 channelClosed :: StablePtr Channel -> IO CInt
-channelClosed spCbPtr = catchAllExceptions "channelClosed" $ do
-    deRefStablePtr spCbPtr >>= close
+channelClosed spCbPtr = catchAllExceptions "channelClosed" $ deRefStablePtr spCbPtr >>= close
 
 foreign export ccall "wts_hs_new_channel_connection" newChannelConnection
     :: StablePtr ListenerCallback
