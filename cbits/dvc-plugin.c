@@ -97,17 +97,21 @@ void iid_to_string(const REFIID iid, char out[IID_STRING_BUF_SIZE])
 
 QUERY_INTERFACE_IMP(IWTSPlugin, plugin_query_interface)
 
+static LONG volatile plugin_refs = 1;
+
 static
 STDMETHODIMP_(ULONG) plugin_add_ref(IWTSPlugin *This)
 {
-    log_message("plugin_add_ref %p", This);
+    LONG refs = InterlockedIncrement(&plugin_refs);
+    log_message("plugin_add_ref %p %ld", This, refs);
     return 1;
 }
 
 static
 STDMETHODIMP_(ULONG) plugin_release(IWTSPlugin *This)
 {
-    log_message("plugin_release %p", This);
+    LONG refs = InterlockedDecrement(&plugin_refs);
+    log_message("plugin_release %p %ld", This, refs);
     return 0;
 }
 
@@ -124,10 +128,8 @@ STDMETHODIMP plugin_initialize(IWTSPlugin *This, IWTSVirtualChannelManager *pCha
     channel_manager = pChannelMgr;
     log_message("plugin_initialize %p channel manager %p references %lu", This, pChannelMgr, refs);
     hs_init(&argc, &args);
-    if (wts_hs_initialize() < 0) {
-        This->lpVtbl->Terminated(This);
+    if (wts_hs_initialize() < 0)
         return E_UNEXPECTED;
-    }
     return S_OK;
 }
 
