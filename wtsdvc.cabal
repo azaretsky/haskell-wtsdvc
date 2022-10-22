@@ -4,6 +4,9 @@ version: 0.1.0
 license: BSD-3-Clause
 author: Anatoly Zaretsky
 maintainer: anatoly.zaretsky@gmail.com
+category: Network
+tested-with: GHC == 8.10.7
+extra-source-files: cbits/wts-plugin-api.h
 
 common deps
     build-depends: base
