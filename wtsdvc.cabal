@@ -6,7 +6,7 @@ author: Anatoly Zaretsky
 maintainer: anatoly.zaretsky@gmail.com
 category: Network
 tested-with: GHC == 8.10.7
-extra-source-files: cbits/wts-plugin-api.h
+extra-source-files: cbits/logging.h cbits/wts-plugin-api.h
 
 common deps
     build-depends: base
@@ -25,7 +25,7 @@ library
     extra-libraries: uuid
     hs-source-dirs: src
     include-dirs: cbits
-    c-sources: cbits/dvc-plugin.c
+    c-sources: cbits/dvc-plugin.c cbits/logging.c
     cc-options: -fPIC -Wall -O3
     ld-options: -Wl,-u,VirtualChannelGetInstance
 

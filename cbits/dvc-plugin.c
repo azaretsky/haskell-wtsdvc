@@ -1,8 +1,6 @@
 #include "HsFFI.h"
-#include <fcntl.h>
-#include <io.h>
-#include <stdio.h>
 #include <windows.h>
+#include "logging.h"
 #include "wts-plugin-api.h"
 
 extern int wts_hs_initialize(void);
@@ -12,84 +10,23 @@ extern int wts_hs_closed(HsStablePtr);
 
 #define INVALID_STABLE_PTR ((HsStablePtr) -1)
 
-static
-void tweak_std_handle(DWORD nStdHandle, int desc, FILE *stream, int flags)
-{
-    int fd;
-    fd = _open_osfhandle((intptr_t) GetStdHandle(nStdHandle), flags);
-    if (fd == -1)
-        return;
-    if (_dup2(fd, desc) != -1)
-        stream->_file = desc;
-    _close(fd);
-}
-
-static
-void setup_std_handles(void)
-{
-    static int initialized = 0;
-    if (initialized)
-        return;
-    initialized = 1;
-    if (!AttachConsole(ATTACH_PARENT_PROCESS)) {
-        return;
-    }
-    tweak_std_handle(STD_INPUT_HANDLE, 0, stdin, _O_RDONLY);
-    tweak_std_handle(STD_OUTPUT_HANDLE, 1, stdout, _O_APPEND);
-    tweak_std_handle(STD_ERROR_HANDLE, 2, stderr, _O_APPEND);
-}
-
-__attribute__ ((format (printf, 1, 2)))
-static
-void log_message(const char *format, ...)
-{
-    SYSTEMTIME local_time;
-    va_list v;
-    GetLocalTime(&local_time);
-    fprintf(stderr, "%04d-%02d-%02d %02d:%02d:%02d.%03d [pid %lu, tid %lu] ",
-        local_time.wYear, local_time.wMonth, local_time.wDay, local_time.wHour,
-        local_time.wMinute, local_time.wSecond, local_time.wMilliseconds,
-        GetCurrentProcessId(), GetCurrentThreadId());
-    va_start(v, format);
-    vfprintf(stderr, format, v);
-    va_end(v);
-    fprintf(stderr, "\n");
-    fflush(stderr);
-}
-
-#define IID_STRING_BUF_SIZE 39
-
-static
-void iid_to_string(const REFIID iid, char out[IID_STRING_BUF_SIZE])
-{
-    sprintf(out, "{%08lx-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}",
-        iid->Data1,
-        iid->Data2,
-        iid->Data3,
-        iid->Data4[0], iid->Data4[1],
-        iid->Data4[2], iid->Data4[3], iid->Data4[4], iid->Data4[5], iid->Data4[6], iid->Data4[7]
-    );
-}
-
 #define QUERY_INTERFACE_IMP(iface, name) \
     static \
     STDMETHODIMP name(iface *This, REFIID riid, void **ppvObject) \
     { \
-        char iid[IID_STRING_BUF_SIZE] = {0}; \
         if (riid == NULL) { \
-            log_message(#name " %p riid is NULL", This); \
+            log_qi_null_riid(#iface, This); \
             return E_INVALIDARG; \
         } \
-        iid_to_string(riid, iid); \
         if (!IsEqualIID(riid, &IID_##iface) && !IsEqualIID(riid, &IID_IUnknown)) { \
-            log_message(#name " %p unknown iid %s", This, iid); \
+            log_qi_unknown_iid(#iface, This, riid); \
             return E_NOINTERFACE; \
         } \
         if (ppvObject == NULL) { \
-            log_message(#name " %p %s ppvObject is NULL", This, iid); \
+            log_qi_null_ppvobject(#iface, This, riid); \
             return E_POINTER; \
         } \
-        log_message(#name " %p %s", This, iid); \
+        log_qi(#iface, This, riid); \
         This->lpVtbl->AddRef(This); \
         *ppvObject = This; \
         return S_OK; \
@@ -103,7 +40,7 @@ static
 STDMETHODIMP_(ULONG) plugin_add_ref(IWTSPlugin *This)
 {
     LONG refs = InterlockedIncrement(&plugin_refs);
-    log_message("plugin_add_ref %p %ld", This, refs);
+    log_addref("IWTSPlugin", This, refs);
     return 1;
 }
 
@@ -111,7 +48,7 @@ static
 STDMETHODIMP_(ULONG) plugin_release(IWTSPlugin *This)
 {
     LONG refs = InterlockedDecrement(&plugin_refs);
-    log_message("plugin_release %p %ld", This, refs);
+    log_release("IWTSPlugin", This, refs);
     return 0;
 }
 
@@ -126,7 +63,7 @@ STDMETHODIMP plugin_initialize(IWTSPlugin *This, IWTSVirtualChannelManager *pCha
     char **args = argv;
     refs = pChannelMgr->lpVtbl->AddRef(pChannelMgr);
     channel_manager = pChannelMgr;
-    log_message("plugin_initialize %p channel manager %p references %lu", This, pChannelMgr, refs);
+    log_plugin_initialize(This, pChannelMgr, refs);
     hs_init(&argc, &args);
     if (wts_hs_initialize() < 0)
         return E_UNEXPECTED;
@@ -136,14 +73,14 @@ STDMETHODIMP plugin_initialize(IWTSPlugin *This, IWTSVirtualChannelManager *pCha
 static
 STDMETHODIMP plugin_connected(IWTSPlugin *This)
 {
-    log_message("plugin_connected %p", This);
+    log_plugin_connected(This);
     return S_OK;
 }
 
 static
 STDMETHODIMP plugin_disconnected(IWTSPlugin *This, DWORD dwDisconnectCode)
 {
-    log_message("plugin_disconnected %p dwDisconnectCode=0x%08lx", This, dwDisconnectCode);
+    log_plugin_disconnected(This, dwDisconnectCode);
     return S_OK;
 }
 
@@ -156,7 +93,7 @@ STDMETHODIMP plugin_terminated(IWTSPlugin *This)
     cm = channel_manager;
     channel_manager = NULL;
     refs = cm->lpVtbl->Release(cm);
-    log_message("plugin_terminated %p channel manager %p references %lu", This, cm, refs);
+    log_plugin_terminated(This, cm, refs);
     return S_OK;
 }
 
@@ -187,7 +124,7 @@ STDMETHODIMP_(ULONG) ccb_add_ref(IWTSVirtualChannelCallback *This)
 {
     struct channel_callback *ccb = (struct channel_callback *) This;
     LONG refs = InterlockedIncrement(&ccb->refs);
-    log_message("ccb_add_ref %p %ld", ccb, refs);
+    log_addref("IWTSVirtualChannelCallback", ccb, refs);
     return refs;
 }
 
@@ -196,7 +133,7 @@ STDMETHODIMP_(ULONG) ccb_release(IWTSVirtualChannelCallback *This)
 {
     struct channel_callback *ccb = (struct channel_callback *) This;
     LONG refs = InterlockedDecrement(&ccb->refs);
-    log_message("ccb_release %p %ld", ccb, refs);
+    log_release("IWTSVirtualChannelCallback", ccb, refs);
     if (refs == 0) {
         if (ccb->channel_callback != INVALID_STABLE_PTR)
             hs_free_stable_ptr(ccb->channel_callback);
@@ -208,9 +145,8 @@ STDMETHODIMP_(ULONG) ccb_release(IWTSVirtualChannelCallback *This)
 static
 STDMETHODIMP ccb_on_data_received(IWTSVirtualChannelCallback *This, ULONG cbSize, BYTE *pBuffer)
 {
-    struct channel_callback *ccb = (struct channel_callback *) This;
-    log_message("ccb_on_data_received %p cbSize=%lu pBuffer=%p", ccb, cbSize, pBuffer);
-    if (wts_hs_data_received(ccb->channel_callback, pBuffer, cbSize) < 0)
+    log_data_received(This, cbSize, pBuffer);
+    if (wts_hs_data_received(((struct channel_callback *) This)->channel_callback, pBuffer, cbSize) < 0)
         return E_UNEXPECTED;
     return S_OK;
 }
@@ -218,9 +154,8 @@ STDMETHODIMP ccb_on_data_received(IWTSVirtualChannelCallback *This, ULONG cbSize
 static
 STDMETHODIMP ccb_on_close(IWTSVirtualChannelCallback *This)
 {
-    struct channel_callback *ccb = (struct channel_callback *) This;
-    log_message("ccb_on_close %p", ccb);
-    if (wts_hs_closed(ccb->channel_callback) < 0)
+    log_closed(This);
+    if (wts_hs_closed(((struct channel_callback *) This)->channel_callback) < 0)
         return E_UNEXPECTED;
     return S_OK;
 }
@@ -246,7 +181,7 @@ STDMETHODIMP_(ULONG) lcb_add_ref(IWTSListenerCallback *This)
 {
     struct listener_callback *lcb = (struct listener_callback *) This;
     LONG refs = InterlockedIncrement(&lcb->refs);
-    log_message("lcb_add_ref %p %ld", lcb, refs);
+    log_addref("IWTSListenerCallback", lcb, refs);
     return refs;
 }
 
@@ -255,7 +190,7 @@ STDMETHODIMP_(ULONG) lcb_release(IWTSListenerCallback *This)
 {
     struct listener_callback *lcb = (struct listener_callback *) This;
     LONG refs = InterlockedDecrement(&lcb->refs);
-    log_message("lcb_release %p %ld", lcb, refs);
+    log_release("IWTSListenerCallback", lcb, refs);
     if (refs == 0) {
         hs_free_stable_ptr(lcb->listener);
         free(lcb);
@@ -279,10 +214,10 @@ STDMETHODIMP lcb_on_new_channel_connection(
     lcb = (struct listener_callback *) This;
     ccb = malloc(sizeof(struct channel_callback));
     if (ccb == NULL) {
-        log_message("lcb_on_new_channel_connection %p pChannel=%p: malloc failed", lcb, pChannel);
+        log_new_connection_malloc_failed(lcb, pChannel);
         return E_OUTOFMEMORY;
     }
-    log_message("lcb_on_new_channel_connection %p pChannel=%p -> %p", lcb, pChannel, ccb);
+    log_new_connection(lcb, pChannel, ccb);
     ccb->iface.lpVtbl = &channel_callback_vtbl;
     ccb->refs = 1;
     ccb->channel_callback = INVALID_STABLE_PTR;
@@ -315,18 +250,18 @@ int wts_create_listener(const char *channel_name, HsStablePtr listener)
     HRESULT hr;
     lcb = malloc(sizeof(struct listener_callback));
     if (lcb == NULL) {
-        log_message("wts_create_listener %s listener=%p: malloc failed", channel_name, listener);
+        log_create_listener_malloc_failed(channel_name, listener);
         hs_free_stable_ptr(listener);
         return -1;
     }
-    log_message("wts_create_listener %s listener=%p -> %p", channel_name, listener, lcb);
+    log_create_listener(channel_name, listener, lcb);
     lcb->iface.lpVtbl = &listener_callback_vtbl;
     lcb->refs = 1;
     lcb->listener = listener;
     hr = channel_manager->lpVtbl->CreateListener(channel_manager, channel_name, 0, &lcb->iface, NULL);
     lcb->iface.lpVtbl->Release(&lcb->iface);
     if (hr != S_OK) {
-        log_message("wts_create_listener %s (%p): channel manager error 0x%08lx", channel_name, lcb, hr);
+        log_create_listener_channel_manager_error(channel_name, lcb, hr);
         return -1;
     }
     return 0;
@@ -335,55 +270,53 @@ int wts_create_listener(const char *channel_name, HsStablePtr listener)
 void wts_ref_channel(IWTSVirtualChannel *channel)
 {
     ULONG refs = channel->lpVtbl->AddRef(channel);
-    log_message("wts_ref_channel %p refs %lu", channel, refs);
+    log_addref("IWTSVirtualChannel", channel, refs);
 }
 
 void wts_unref_channel(IWTSVirtualChannel *channel)
 {
     ULONG refs = channel->lpVtbl->Release(channel);
-    log_message("wts_unref_channel %p refs %lu", channel, refs);
+    log_release("IWTSVirtualChannel", channel, refs);
 }
 
 int wts_write_channel(IWTSVirtualChannel *channel, void *bytes, ULONG len)
 {
     HRESULT hr = channel->lpVtbl->Write(channel, len, bytes, NULL);
-    log_message("wts_write_channel %p bytes=%p len=%lu -> 0x%08lx", channel, bytes, len, hr);
+    log_write_channel(channel, bytes, len, hr);
     return (hr == S_OK) ? 0 : -1;
 }
 
 int wts_close_channel(IWTSVirtualChannel *channel)
 {
     HRESULT hr = channel->lpVtbl->Close(channel);
-    log_message("wts_close_channel %p -> 0x%08lx", channel, hr);
+    log_close_channel(channel, hr);
     return (hr == S_OK) ? 0 : -1;
 }
 
 STDAPI VirtualChannelGetInstance(REFIID refiid, ULONG *pNumObjs, VOID **ppObjArray)
 {
-    setup_std_handles();
     if (refiid == NULL) {
-        log_message("VirtualChannelGetInstance refiid is NULL");
+        log_vcgi_null_refiid();
         return E_INVALIDARG;
     }
     if (!IsEqualIID(refiid, &IID_IWTSPlugin)) {
-        char iid[IID_STRING_BUF_SIZE] = {0};
-        iid_to_string(refiid, iid);
-        log_message("VirtualChannelGetInstance unknown iid %s", iid);
+        log_vcgi_unknown_iid(refiid);
         return E_NOINTERFACE;
     }
     if (pNumObjs == NULL) {
-        log_message("VirtualChannelGetInstance pNumObjs is NULL");
+        log_vcgi_null_pnumobjs();
         return E_POINTER;
     }
     if (ppObjArray != NULL) {
-        if (*pNumObjs < 1) {
-            log_message("VirtualChannelGetInstance *pNumObjs=%lu is too small", *pNumObjs);
+        ULONG num = *pNumObjs;
+        if (num < 1) {
+            log_vcgi_too_small_numobjs(num);
             return E_INVALIDARG;
         }
-        log_message("VirtualChannelGetInstance get plugin instance %p", &plugin);
+        log_vcgi_get(&plugin);
         ppObjArray[0] = &plugin;
     } else
-        log_message("VirtualChannelGetInstance get number of instances");
+        log_vcgi_count();
     *pNumObjs = 1;
     return S_OK;
 }
