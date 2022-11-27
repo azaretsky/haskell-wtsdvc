@@ -2,7 +2,7 @@ module Network.WtsDvc.Client.TH (declareEntryPoint, CInt (..)) where
 
 import Foreign.C (CInt (..))
 import Language.Haskell.TH
-import Network.WtsDvc.Client (catchAllExceptions)
+import Network.WtsDvc.Client.Internal (catchAllExceptions)
 
 declareEntryPoint :: Name -> Q [Dec]
 declareEntryPoint entry = do

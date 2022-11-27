@@ -1,11 +1,10 @@
 module Network.WtsDvc.Client (
     Channel (..),
-    catchAllExceptions,
     createListener
 ) where
 
 import Control.Concurrent (MVar, newMVar, swapMVar, withMVar)
-import Control.Exception (SomeException, catch, displayException, onException)
+import Control.Exception (onException)
 import qualified Data.ByteString as B (ByteString, packCStringLen)
 import qualified Data.ByteString.Unsafe as B (unsafeUseAsCStringLen)
 import Data.Foldable (traverse_)
@@ -26,19 +25,10 @@ import Foreign (
     withForeignPtr
   )
 import Foreign.C (CInt (..), CString, withCAString)
-import System.IO (hPutStrLn, stderr)
+import Network.WtsDvc.Client.Internal (catchAllExceptions)
 import System.IO.Error (illegalOperationErrorType, ioeSetErrorString, mkIOError)
 
 data Channel = Channel {submit :: B.ByteString -> IO (), close :: IO ()}
-
-reportUnhandledException :: String -> SomeException -> IO ()
-reportUnhandledException loc e = hPutStrLn stderr $ loc <> " unhandled exception: " <> displayException e
-
-catchAllExceptions :: String -> IO () -> IO CInt
-catchAllExceptions loc action =
-    catch
-        (action >> return 0)
-        (\e -> reportUnhandledException loc e >> return (-1))
 
 data WTSChannel
 

@@ -22,6 +22,7 @@ library
     exposed-modules:
         Network.WtsDvc.Client
         Network.WtsDvc.Client.TH
+    other-modules: Network.WtsDvc.Client.Internal
     extra-libraries: uuid
     hs-source-dirs: src
     include-dirs: cbits
