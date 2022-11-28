@@ -1,6 +1,7 @@
 module Network.WtsDvc.Client (
     Channel (..),
-    createListener
+    createListener,
+    logUserMessage
 ) where
 
 import Control.Concurrent (MVar, newMVar, swapMVar, withMVar)
@@ -25,7 +26,7 @@ import Foreign (
     withForeignPtr
   )
 import Foreign.C (CInt (..), CString, withCAString)
-import Network.WtsDvc.Client.Internal (catchAllExceptions)
+import Network.WtsDvc.Client.Internal (catchAllExceptions, logUserMessage)
 import System.IO.Error (illegalOperationErrorType, ioeSetErrorString, mkIOError)
 
 data Channel = Channel {submit :: B.ByteString -> IO (), close :: IO ()}

@@ -206,3 +206,8 @@ void log_vcgi_count(void)
 {
     log_message("VirtualChannelGetInstance get number of instances");
 }
+
+void log_user_message(const char *message)
+{
+    log_message("user: %s", message);
+}
